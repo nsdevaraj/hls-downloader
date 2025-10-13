@@ -14,12 +14,14 @@ export function addLinkedinListener(store: ReturnType<typeof createStore>) {
         return;
       }
 
-      // If the URL matches the old listener, let it handle it.
-      if (details.url.endsWith(".m3u8") || details.url.includes(".m3u8?")) {
+      let tab;
+      try {
+        tab = await tabs.get(details.tabId);
+      } catch (error) {
+        // Tab may have been closed
         return;
       }
 
-      const tab = await tabs.get(details.tabId);
       if (!tab.url || !tab.url.includes("linkedin.com")) {
         return;
       }
@@ -30,17 +32,30 @@ export function addLinkedinListener(store: ReturnType<typeof createStore>) {
 
       const contentType = contentTypeHeader?.value?.toLowerCase() || "";
 
-      if (
-        !contentType.includes("application/vnd.apple.mpegurl") &&
-        !contentType.includes("application/x-mpegurl")
-      ) {
+      // Check if this is an HLS manifest request
+      const isM3U8 = details.url.endsWith(".m3u8") || details.url.includes(".m3u8?");
+      const hasHLSContentType = 
+        contentType.includes("application/vnd.apple.mpegurl") ||
+        contentType.includes("application/x-mpegurl");
+
+      // LinkedIn serves .m3u8 files with text/plain content-type, so check URL pattern
+      if (!isM3U8 && !hasHLSContentType) {
         return;
       }
+
+      console.log("[LinkedIn Listener] HLS manifest detected:", {
+        url: details.url,
+        statusCode: details.statusCode,
+        contentType,
+        isM3U8,
+        hasHLSContentType
+      });
 
       if (
         details.statusCode &&
         (details.statusCode < 200 || details.statusCode >= 300)
       ) {
+        console.log("[LinkedIn Listener] Rejected due to status code:", details.statusCode);
         return;
       }
 
@@ -66,7 +81,7 @@ export function addLinkedinListener(store: ReturnType<typeof createStore>) {
           store.getState().playlists.playlistsStatus[details.url]?.status;
         if (status === "ready") {
           const action = actiobV2 || actiobV3;
-          void action.setIcon({
+          action.setIcon({
             tabId: tab.id,
             path: {
               "16": "assets/icons/16-new.png",
@@ -74,6 +89,8 @@ export function addLinkedinListener(store: ReturnType<typeof createStore>) {
               "128": "assets/icons/128-new.png",
               "256": "assets/icons/256-new.png",
             },
+          }).catch(() => {
+            // Tab may have been closed, ignore error
           });
           unsubscribe();
         } else if (status === "error") {
@@ -82,7 +99,7 @@ export function addLinkedinListener(store: ReturnType<typeof createStore>) {
       });
     },
     {
-      types: ["xmlhttprequest"],
+      types: ["xmlhttprequest", "media", "other"],
       urls: ["<all_urls>"],
     },
     ["responseHeaders"]
